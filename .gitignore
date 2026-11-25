@@ -18,3 +18,6 @@
 # Local export for Overleaf upload
 GarbageGo-paper.zip
 GarbageGo-paper.pdf
+
+# Overleaf session cookie (grants full account access) - never commit
+.olauth
