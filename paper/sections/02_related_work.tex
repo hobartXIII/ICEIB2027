@@ -1,7 +1,21 @@
 \section{Related Work}\label{sec:related}
-\subsection{Existing Approaches}
-Review relevant methods and compare assumptions, strengths, and limitations.
-The IEEE style uses numbered citations, e.g., \cite{shannon1948}.
-% The citation above is a formatting example; replace with relevant sources.
+
+Following the dual nature of the problem, we review domain knowledge on collection operations, arrival prediction, and pedestrian access, and then AI techniques for tool-using agents and selective decision making.
+
+\subsection{Municipal Waste Collection Operations}
+Operations research on municipal solid waste collection has focused mainly on the operator's side: vehicle routing, districting, and scheduling~\cite{belien2014}. These studies optimize routes and crew costs but rarely model the resident's side of the interaction. In door-to-door systems where waste must be handed over in person, the relevant resident-facing quantities are the truck's arrival time at a specific stop and the short dwell interval during which handover is possible. Published schedules provide a nominal time, but actual arrivals drift with traffic, weather, and variable dwell times along the route.
+
+\subsection{Vehicle Arrival-Time Prediction}
+Arrival-time prediction for fixed-route vehicles has been studied extensively for public buses, using historical averages, regression, Kalman filtering, and neural networks~\cite{chien2002,jeong2004}. These methods generally assume dense location updates and evaluate point-accuracy metrics such as mean absolute error. Collection trucks differ in two important ways: their stops are short and numerous, and open fleet data may be refreshed only every ten minutes~\cite{taichung_fleet_api}. With such sparse observations, simple baselines may be as robust as complex models, so a fair comparison requires time-ordered evaluation that prevents information from the future leaking into training~\cite{tashman2000,hyndman2021}.
+
+\subsection{Pedestrian Accessibility and Walking Time}
+Walking time depends on the pedestrian network rather than straight-line distance, and walking speed differs substantially across individuals and age groups~\cite{knoblauch1996}. Spatial databases such as PostGIS support indexed nearest-neighbor search and network distance computation, enabling many candidate stops to be evaluated per query without relying on rate-limited commercial routing services~\cite{postgis}.
+
+\subsection{Tool-Using LLM Agents and Hallucination}
+LLMs can be extended with external tools by interleaving reasoning and actions~\cite{yao2023react}, by learning when to call application programming interfaces~\cite{schick2023toolformer}, or by fine-tuning on large API collections~\cite{patil2023gorilla}. Tool use reduces but does not eliminate hallucination: models may still invent arguments, misreport tool outputs, or answer outside their competence~\cite{ji2023hallucination}. Open-ended agents maximize flexibility, whereas safety-critical deployments favor a restricted set of tools with validated schemas, at the cost of handling fewer question types.
+
+\subsection{Selective Prediction and Graceful Degradation}
+The reject option formalizes the trade-off between error rate and the fraction of cases on which a classifier commits to a decision~\cite{chow1970}. Selective prediction extends this idea to modern models through a risk--coverage trade-off, in which a model abstains when its confidence is insufficient~\cite{geifman2017}. Departure advice is a natural instance: an incorrect ``you can make it'' is costly, while abstaining and showing the static schedule is a safe fallback.
+
 \subsection{Research Gap}
-Explain how the proposed method addresses limitations of previous research.
+Existing work predicts vehicle arrivals, computes walking routes, or builds tool-using agents, but does not combine them into a single departure decision that knows when to abstain. GarbageGo addresses this gap by formulating departure advice as a selective decision under three sources of uncertainty, by restricting the LLM to explaining tool-computed results, and by evaluating the system primarily on its false-feasibility rate at a given coverage rather than on arrival-time accuracy alone.

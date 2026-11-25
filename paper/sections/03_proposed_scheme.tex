@@ -1,28 +1,132 @@
 \section{Proposed Scheme}\label{sec:method}
+
 \subsection{Problem Formulation}
-Define the inputs, outputs, assumptions, and objective function.
+A resident issues a query at time $t_q$ from location $u$, optionally with a personal walking speed $v_u$. Let $\mathcal{S}$ be the set of collection stops within a search radius of $u$ whose collection window covers $t_q$. For the truck serving stop $s\in\mathcal{S}$, the most recent fleet record carries an observation time $t_o$ (\texttt{observed\_at}, when the position was recorded) and a collection time $t_c$ (\texttt{collected\_at}, when GarbageGo received it). The data latency at query time is
 \begin{equation}
-\theta^{*}=\arg\min_{\theta}\mathcal{L}(\theta).
-\label{eq:objective}
+\Delta = t_q - t_o ,
+\label{eq:latency}
 \end{equation}
+which includes both the update interval of the open data and the transmission delay $t_c - t_o$.
+
+For each stop we estimate the remaining time until the truck arrives, $\hat{A}_s$, and the resident's walking time
+\begin{equation}
+\hat{W}_s = \frac{d_{\mathrm{net}}(u,s)}{v_u},
+\label{eq:walk}
+\end{equation}
+where $d_{\mathrm{net}}$ is the shortest pedestrian-network distance. The time margin, or \emph{slack}, of stop $s$ is
+\begin{equation}
+\sigma_s = \hat{A}_s - \hat{W}_s - B_s ,
+\label{eq:slack}
+\end{equation}
+where $B_s$ is a safety buffer. A positive slack means that, under current data and assumptions, the resident can depart now and arrive with at least $B_s$ to spare; it is not a guarantee. The slack also yields a latest recommended departure time, $t_q + \sigma_s$.
+
+\subsection{Adaptive Safety Buffer}
+A fixed buffer either wastes residents' time when data are fresh or is too thin when data are stale. We therefore let the buffer grow with each source of uncertainty:
+\begin{equation}
+B_s = b_0 + \alpha\,\Delta + z\,\hat{e}_{s}(h) + \frac{\epsilon_u}{v_u},
+\label{eq:buffer}
+\end{equation}
+where $b_0$ is a minimum buffer (initially three minutes); $\alpha\Delta$ accounts for truck movement since the last observation; $\hat{e}_{s}(h)$ is the empirical spread of arrival-time residuals at prediction horizon $h$, estimated on the training period; $z$ sets the conservativeness; and $\epsilon_u$ is the reported positioning accuracy of the user's device, converted to time. The parameters $\alpha$ and $z$ are calibrated on the training period so that the false-feasibility rate on validation data stays below a target level, and are not tuned on the test period.
+
+\subsection{Advise-or-Defer Decision Rule}
+Given the slacks, the system returns exactly one of three outcomes:
+\begin{enumerate}
+\item \textbf{Defer.} If fleet data are unavailable, fail validation, or are stale ($\Delta > \tau$, with $\tau = 15$ minutes initially), the system does not compute slack. It shows the official static schedule for nearby stops and states explicitly that dynamic data are unavailable and why.
+\item \textbf{Advise.} Otherwise, stops that the truck has already passed are removed, and the feasible set $\mathcal{F} = \{s\in\mathcal{S} : \sigma_s > 0\}$ is formed. If $\mathcal{F}$ is non-empty, stops are ranked by slack in descending order. The first is the primary recommendation, and up to two more are offered as alternatives, each with its latest departure time, data timestamp, and risk notes.
+\item \textbf{No feasible stop.} If $\mathcal{F}$ is empty, the system states that no nearby stop can be reached with an adequate margin and shows the next scheduled collection.
+\end{enumerate}
+Ranking by slack rather than distance reflects a core domain insight: the nearest stop is often the one the truck is about to leave. Ranking by the largest margin selects the option most robust to prediction error.
+
+\subsection{Arrival-Time Predictors}
+The ETA engine exposes interchangeable predictors behind a common interface so that they can be compared under identical conditions:
+\begin{itemize}
+\item \textbf{Static schedule:} the published collection time at $s$ minus $t_q$.
+\item \textbf{Historical average:} the mean travel time from the truck's current route position to $s$ on the same route, weekday type, and time of day in the training period.
+\item \textbf{Distance--speed:} remaining route distance to $s$ divided by the truck's recent average speed, plus the expected dwell time at the intermediate stops.
+\item \textbf{Regression:} a regression model using remaining route distance, number of remaining stops, time of day, weekday type, recent speed, and data latency as features.
+\end{itemize}
+All predictors require mapping a truck position to its progress along the route, which is done by projecting the position onto the ordered stop sequence of the route. A truck that has reported zero speed for an extended period is flagged as stationary, and its uncertainty term is widened.
+
 \subsection{System Architecture}
-Describe the components and data flow in Fig.~\ref{fig:architecture}.
+GarbageGo is implemented as a modular monolith, a single deployable service with strict internal module boundaries, backed by PostgreSQL with the PostGIS extension and exposed through a FastAPI web interface. Fig.~\ref{fig:architecture} shows the components and data flow. The \emph{data acquisition and validation} module ingests the official fleet feed~\cite{taichung_fleet_api} and historical records with the same format, checks fields, coordinate ranges, and timestamps, and stores both $t_o$ and $t_c$. The \emph{GIS engine} retrieves candidate stops and computes network walking distances. The \emph{ETA engine} produces $\hat{A}_s$ and the error spread used in~\eqref{eq:buffer}. The \emph{recommendation engine} applies the decision rule. The \emph{LLM agent} interprets the user's request, calls the tools, and turns the structured result into an explanation.
+
 \begin{figure}[t]
 \centering
-\IfFileExists{figures/architecture.pdf}{\includegraphics[width=\columnwidth]{architecture.pdf}}{\fbox{\parbox[c][25mm][c]{0.85\columnwidth}{\centering Insert system architecture here}}}
-\caption{Overview of the proposed system architecture.}
+\begin{tikzpicture}[
+  node distance=4mm and 6mm,
+  box/.style={draw, rounded corners=2pt, align=center, font=\footnotesize,
+              minimum height=6mm, inner sep=2pt, text width=20mm},
+  llm/.style={box, fill=gray!15},
+  arr/.style={-{Stealth[length=1.6mm]}, thin}]
+\node[box] (user) {User / Web App};
+\node[llm, below=of user] (agent) {LLM Agent\\(intent, explanation)};
+\node[box, below=9mm of agent] (rec) {Recommendation\\Engine (slack)};
+\node[box, left=of rec] (gis) {GIS Engine\\(PostGIS)};
+\node[box, right=of rec] (eta) {ETA Engine};
+\node[box, below=7mm of rec] (val) {Data Acquisition\\\& Validation};
+\node[box, below=of val] (src) {Official API /\\Historical JSON};
+\draw[{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}, thin] (user) -- (agent);
+\draw[arr] ([xshift=-3mm]agent.south) -- node[left, font=\scriptsize]{tool calls} ([xshift=-3mm]rec.north);
+\draw[arr] ([xshift=3mm]rec.north) -- node[right, font=\scriptsize]{JSON result} ([xshift=3mm]agent.south);
+\draw[arr] (gis) -- node[above, font=\scriptsize]{$\hat{W}_s$} (rec);
+\draw[arr] (eta) -- node[above, font=\scriptsize]{$\hat{A}_s$} (rec);
+\draw[arr] (src) -- (val);
+\draw[arr] (val.west) -| (gis.south);
+\draw[arr] (val.east) -| (eta.south);
+\draw[arr, dashed] (val) -- node[right, font=\scriptsize]{$\Delta$} (rec);
+\end{tikzpicture}
+\caption{GarbageGo architecture. Shaded: probabilistic language component; unshaded: deterministic, schema-validated tools. All numbers shown to the user originate from deterministic tools.}
 \label{fig:architecture}
 \end{figure}
-\subsection{Proposed Algorithm}
+
+\subsection{Tool-Grounded Agent Design}
+The agent may call only the whitelisted tools in Table~\ref{tab:tools}. Each tool has a JSON Schema for its arguments and its result, and calls that fail validation are rejected before execution. The LLM never computes coordinates, distances, or times itself. To confine hallucination to a verifiable boundary, the final response is generated from the structured result payload under a grounding template, and every number in the generated text is checked against that payload. If the check fails, the system falls back to a deterministic text template. Requests outside the domain, such as medical questions, are declined by rule.
+
+\begin{table}[t]
+\caption{Whitelisted Tools Exposed to the LLM Agent}
+\label{tab:tools}
+\centering
+\footnotesize
+\begin{tabular}{@{}lp{0.47\columnwidth}@{}}
+\toprule
+Tool & Output \\
+\midrule
+\texttt{find\_candidate\_stops} & Stops within radius whose collection window covers $t_q$ \\
+\texttt{get\_fleet\_status} & Latest truck records with $t_o$, $t_c$, and validation flags \\
+\texttt{estimate\_walking\_time} & $\hat{W}_s$ from network distance and $v_u$ \\
+\texttt{predict\_eta} & $\hat{A}_s$ and residual spread $\hat{e}_s(h)$ \\
+\texttt{evaluate\_feasibility} & Outcome (advise, defer, or no feasible stop), ranked stops, $\sigma_s$, reasons \\
+\texttt{get\_static\_timetable} & Published schedule for the fallback mode \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Recommendation Procedure}
+Algorithm~\ref{alg:method} summarizes the end-to-end procedure.
+
 \begin{algorithm}[t]
-\caption{Illustrative processing procedure}
+\caption{Advise-or-Defer Departure Recommendation}
 \label{alg:method}
 \begin{algorithmic}[1]
-\Require Input data $X$, model parameters $\theta$
-\Ensure Output $Y$
-\State Preprocess $X$ to obtain $X'$
-\State $Y \gets f_{\theta}(X')$
-\State \Return $Y$
+\Require user location $u$, walking speed $v_u$, query time $t_q$
+\Ensure outcome, ranked stops with slack, explanation
+\State $\mathcal{S} \gets$ \Call{FindCandidateStops}{$u, t_q$}
+\State $D \gets$ \Call{GetFleetStatus}{$\mathcal{S}$}
+\If{$D$ is unavailable or invalid \textbf{or} $t_q - t_o > \tau$}
+  \State \Return \Call{Explain}{\textsc{Defer}, \Call{StaticTimetable}{$\mathcal{S}$}, reason}
+\EndIf
+\State $\mathcal{F} \gets \emptyset$
+\ForAll{$s \in \mathcal{S}$ not yet passed by the truck}
+  \State $\hat{W}_s \gets$ \Call{WalkingTime}{$u, s, v_u$}
+  \State $(\hat{A}_s, \hat{e}_s) \gets$ \Call{PredictETA}{$s, D$}
+  \State $B_s \gets b_0 + \alpha\Delta + z\,\hat{e}_s + \epsilon_u / v_u$
+  \State $\sigma_s \gets \hat{A}_s - \hat{W}_s - B_s$
+  \If{$\sigma_s > 0$} \State $\mathcal{F} \gets \mathcal{F} \cup \{(s,\sigma_s)\}$ \EndIf
+\EndFor
+\If{$\mathcal{F} = \emptyset$}
+  \State \Return \Call{Explain}{\textsc{NoFeasibleStop}, next schedule}
+\EndIf
+\State sort $\mathcal{F}$ by $\sigma_s$ in descending order
+\State \Return \Call{Explain}{\textsc{Advise}, top three of $\mathcal{F}$, $\Delta$}
 \end{algorithmic}
 \end{algorithm}
-Replace the illustrative objective and algorithm with the actual method.
