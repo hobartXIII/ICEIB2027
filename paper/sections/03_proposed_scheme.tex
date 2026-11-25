@@ -74,9 +74,9 @@ Fig.~\ref{fig:architecture} shows how the elements interact. The only probabilis
 \begin{figure}[t]
 \centering
 \begin{tikzpicture}[
-  node distance=4mm and 6mm,
+  node distance=4mm and 5mm,
   box/.style={draw, rounded corners=2pt, align=center, font=\footnotesize,
-              minimum height=6mm, inner sep=2pt, text width=20mm},
+              minimum height=6mm, inner sep=2pt, text width=23mm},
   llm/.style={box, fill=gray!15},
   arr/.style={-{Stealth[length=1.6mm]}, thin}]
 \node[box] (user) {User / Web App};
@@ -117,7 +117,7 @@ Algorithm~\ref{alg:method} gives the end-to-end procedure executed for each quer
 \State $\mathcal{S} \gets$ \Call{FindCandidateStops}{$u, t_q$}
 \State $D \gets$ \Call{GetFleetStatus}{$\mathcal{S}$}
 \If{$D$ is unavailable or invalid \textbf{or} $t_q - t_o > \tau$}
-  \State \Return \Call{Explain}{\textsc{Defer}, \Call{StaticTimetable}{$\mathcal{S}$}, reason}
+  \State \Return \Call{Explain}{\textsc{Defer}, \textsc{StaticTimetable}$(\mathcal{S})$, reason}
 \EndIf
 \State $\mathcal{F} \gets \emptyset$
 \ForAll{$s \in \mathcal{S}$ not yet passed by the truck}

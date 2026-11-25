@@ -14,3 +14,7 @@
 *.nav
 *.snm
 *.vrb
+
+# Local export for Overleaf upload
+GarbageGo-paper.zip
+GarbageGo-paper.pdf

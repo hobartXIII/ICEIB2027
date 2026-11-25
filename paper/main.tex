@@ -4,10 +4,17 @@
 % ==========================================
 % Packages
 % ==========================================
+\usepackage{iftex}
+\ifXeTeX % local preview builds (e.g., Tectonic); pdfLaTeX on Overleaf uses Times directly
+  \usepackage{fontspec}
+  \setmainfont{texgyretermes}[Extension=.otf, UprightFont=*-regular,
+    BoldFont=*-bold, ItalicFont=*-italic, BoldItalicFont=*-bolditalic]
+\fi
 \usepackage{cite}
 \usepackage{amsmath,amssymb,amsfonts}
 \usepackage{graphicx}
 \usepackage{booktabs}
+\usepackage{array}
 \usepackage{algorithm}
 \usepackage{algpseudocode}
 \usepackage{xcolor}
