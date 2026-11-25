@@ -1,0 +1,83 @@
+
+\documentclass[conference]{IEEEtran}
+
+% ==========================================
+% Packages
+% ==========================================
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{xcolor}
+\usepackage{url}
+
+\graphicspath{{figures/}}
+
+\begin{document}
+
+% ==========================================
+% Title
+% ==========================================
+\title{Your Research Paper Title}
+
+% ==========================================
+% Authors
+% ==========================================
+\author{
+    \IEEEauthorblockN{
+        First Author and Second Author
+    }
+    \IEEEauthorblockA{
+        Department of Computer Science and Engineering\\
+        National Chung Hsing University\\
+        Taichung, Taiwan\\
+        Email: author@example.com
+    }
+}
+
+\maketitle
+
+% ==========================================
+% Abstract and Keywords
+% ==========================================
+\input{sections/00_abstract}
+
+% ==========================================
+% I. Introduction
+% ==========================================
+\input{sections/01_introduction}
+
+% ==========================================
+% II. Related Work
+% ==========================================
+\input{sections/02_related_work}
+
+% ==========================================
+% III. Proposed Scheme
+% ==========================================
+\input{sections/03_proposed_scheme}
+
+% ==========================================
+% IV. Experiments and Discussion
+% ==========================================
+\input{sections/04_experiments}
+
+% ==========================================
+% V. Conclusion
+% ==========================================
+\input{sections/05_conclusion}
+
+% ==========================================
+% Acknowledgment (Optional)
+% ==========================================
+% \section*{Acknowledgment}
+
+% ==========================================
+% References
+% ==========================================
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}
