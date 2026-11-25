@@ -21,3 +21,5 @@ GarbageGo-paper.pdf
 
 # Overleaf session cookie (grants full account access) - never commit
 .olauth
+# Local MCP config (machine-specific paths)
+.mcp.json
