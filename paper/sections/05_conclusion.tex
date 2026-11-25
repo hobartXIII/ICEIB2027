@@ -1,4 +1,13 @@
 \section{Conclusion}\label{sec:conclusion}
-This paper reframed curbside waste-collection assistance from predicting where the garbage truck is to deciding whether a resident should leave now, and when a system should decline to say. GarbageGo combines a slack-based feasibility rule with an adaptive safety buffer, an explicit defer path for stale or invalid data, and a tool-grounded agent in which the language model only interprets requests and explains results computed by validated tools. We also specified a rolling-origin evaluation that treats the false-feasibility rate as the primary safety metric, reports it against coverage, and adds at least thirty anomaly scenarios.
 
-The expected outcomes are a statistically significant improvement in arrival-time error over the historical-average baseline, a bounded false-feasibility rate without collapse in coverage, and full disclosure of data sources and fallback reasons. These outcomes remain to be verified. Future work will complete the backtest on 2024--2026 Taichung data, measure walking speeds with real users including older adults, and use the results to delimit explicitly when personalized departure advice is justified under low-frequency fleet data.
+% W. What proposed
+Residents of an aging society need to know not where the garbage truck is, but whether they can leave now and still meet it, and existing schedules, tracking maps, arrival models, and LLM assistants do not answer this safely under sparse, delayed data. This paper proposed GarbageGo, a domain-specific, tool-grounded agent that turns this question into an advise-or-defer decision.
+
+% X. eXcel
+The scheme is designed for door-to-door collection with low-frequency fleet data, where accuracy cannot be made exact and wrong optimistic advice is costly. It ranks stops by a slack that subtracts walking time and an adaptive safety buffer from the predicted arrival, defers with a disclosed reason when data are stale or invalid, and limits the LLM to explaining results produced by schema-validated tools. We showed that a buffer covering the conditional quantile of the combined estimation error bounds the false-feasibility rate, and that the buffer controls the trade-off between risk and coverage.
+
+% Y. Yields
+We also specified a rolling-origin evaluation on 2024--2026 Taichung data that treats the false-feasibility rate as the primary safety metric, reports it against coverage, and adds at least thirty anomaly scenarios. The expected outcomes are a statistically significant improvement in arrival-time error over the historical-average baseline, a bounded false-feasibility rate without collapse in coverage, and full disclosure of data sources and fallback reasons; these remain to be verified.
+
+% Z. Zen
+The main observation of this work is that, under low-frequency data, a trustworthy assistant is defined less by how accurately it predicts than by how clearly it knows when not to advise. Future work will complete the backtest, measure walking speeds with real users including older adults, and use the results to delimit explicitly when personalized departure advice is justified.

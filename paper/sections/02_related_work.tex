@@ -1,21 +1,41 @@
 \section{Related Work}\label{sec:related}
 
-Following the dual nature of the problem, we review domain knowledge on collection operations, arrival prediction, and pedestrian access, and then AI techniques for tool-using agents and selective decision making.
+Following the dual nature of the problem, this section reviews existing methods from simple to complex, covering both domain knowledge on collection operations and AI techniques for agents and selective decisions, and then summarizes them in a SWOT comparison.
 
-\subsection{Municipal Waste Collection Operations}
-Operations research on municipal solid waste collection has focused mainly on the operator's side: vehicle routing, districting, and scheduling~\cite{belien2014}. These studies optimize routes and crew costs but rarely model the resident's side of the interaction. In door-to-door systems where waste must be handed over in person, the relevant resident-facing quantities are the truck's arrival time at a specific stop and the short dwell interval during which handover is possible. Published schedules provide a nominal time, but actual arrivals drift with traffic, weather, and variable dwell times along the route.
+% M. Methods
+\subsection{Existing Methods}
+\textbf{Collection schedules and operations.} Operations research on municipal solid waste collection has focused on the operator's side: vehicle routing, districting, and scheduling~\cite{belien2014}. Published schedules are its resident-facing product. They are easy to understand, but actual arrivals drift with traffic, weather, and variable dwell times along the route. Open fleet feeds such as Taichung's~\cite{taichung_fleet_api} add live positions but leave the interpretation to residents.
 
-\subsection{Vehicle Arrival-Time Prediction}
-Arrival-time prediction for fixed-route vehicles has been studied extensively for public buses, using historical averages, regression, Kalman filtering, and neural networks~\cite{chien2002,jeong2004}. These methods generally assume dense location updates and evaluate point-accuracy metrics such as mean absolute error. Collection trucks differ in two important ways: their stops are short and numerous, and open fleet data may be refreshed only every ten minutes~\cite{taichung_fleet_api}. With such sparse observations, simple baselines may be as robust as complex models, so a fair comparison requires time-ordered evaluation that prevents information from the future leaking into training~\cite{tashman2000,hyndman2021}.
+\textbf{Arrival-time prediction.} For fixed-route vehicles, arrival times have been predicted with historical averages, regression, Kalman filtering, and neural networks~\cite{chien2002,jeong2004}. These methods generally assume dense location updates and evaluate point accuracy. With sparse observations, simple baselines may be as robust as complex models, and a fair comparison requires time-ordered evaluation that prevents information from the future leaking into training~\cite{tashman2000,hyndman2021}.
 
-\subsection{Pedestrian Accessibility and Walking Time}
-Walking time depends on the pedestrian network rather than straight-line distance, and walking speed differs substantially across individuals and age groups~\cite{knoblauch1996}. Spatial databases such as PostGIS support indexed nearest-neighbor search and network distance computation, enabling many candidate stops to be evaluated per query without relying on rate-limited commercial routing services~\cite{postgis}.
+\textbf{Pedestrian accessibility.} Walking time depends on the pedestrian network rather than straight-line distance, and walking speed differs substantially across individuals and age groups~\cite{knoblauch1996}. Spatial databases such as PostGIS support indexed nearest-neighbor search and network distance computation for many candidate stops per query~\cite{postgis}.
 
-\subsection{Tool-Using LLM Agents and Hallucination}
-LLMs can be extended with external tools by interleaving reasoning and actions~\cite{yao2023react}, by learning when to call application programming interfaces~\cite{schick2023toolformer}, or by fine-tuning on large API collections~\cite{patil2023gorilla}. Tool use reduces but does not eliminate hallucination: models may still invent arguments, misreport tool outputs, or answer outside their competence~\cite{ji2023hallucination}. Open-ended agents maximize flexibility, whereas safety-critical deployments favor a restricted set of tools with validated schemas, at the cost of handling fewer question types.
+\textbf{Tool-using LLM agents.} LLMs can be extended with external tools by interleaving reasoning and actions~\cite{yao2023react}, by learning when to call application programming interfaces~\cite{schick2023toolformer}, or by fine-tuning on large API collections~\cite{patil2023gorilla}. Tool use reduces but does not eliminate hallucination: models may still invent arguments, misreport tool outputs, or answer outside their competence~\cite{ji2023hallucination}.
 
-\subsection{Selective Prediction and Graceful Degradation}
-The reject option formalizes the trade-off between error rate and the fraction of cases on which a classifier commits to a decision~\cite{chow1970}. Selective prediction extends this idea to modern models through a risk--coverage trade-off, in which a model abstains when its confidence is insufficient~\cite{geifman2017}. Departure advice is a natural instance: an incorrect ``you can make it'' is costly, while abstaining and showing the static schedule is a safe fallback.
+% N. New proposed
+\subsection{New Trends and the Proposed Direction}
+Two recent trends motivate this work. First, deployed agents are moving from open-ended tool use toward restricted, schema-validated tool sets, trading flexibility for verifiability. Second, selective prediction formalizes when a model should abstain through a risk--coverage trade-off~\cite{chow1970,geifman2017}. GarbageGo combines both: it restricts the LLM to explaining the output of validated domain tools, and it treats departure advice as a selective decision whose primary measure is the false-feasibility rate at a given coverage rather than arrival-time accuracy alone.
 
-\subsection{Research Gap}
-Existing work predicts vehicle arrivals, computes walking routes, or builds tool-using agents, but does not combine them into a single departure decision that knows when to abstain. GarbageGo addresses this gap by formulating departure advice as a selective decision under three sources of uncertainty, by restricting the LLM to explaining tool-computed results, and by evaluating the system primarily on its false-feasibility rate at a given coverage rather than on arrival-time accuracy alone.
+% O. Organize
+\subsection{Comparative Summary}
+Table~\ref{tab:swot} summarizes the strengths, weaknesses, opportunities, and threats of the four method families with respect to departure decisions.
+
+\begin{table*}[t]
+\caption{SWOT Comparison of Existing Approaches for Departure Decisions in Curbside Collection}
+\label{tab:swot}
+\centering
+\footnotesize
+\begin{tabular}{@{}p{0.15\textwidth}p{0.19\textwidth}p{0.19\textwidth}p{0.19\textwidth}p{0.19\textwidth}@{}}
+\toprule
+Approach & Strengths & Weaknesses & Opportunities & Threats \\
+\midrule
+Static schedules and tracking displays~\cite{belien2014,taichung_fleet_api} & Simple, transparent, available citywide & No walking time; no estimate of arrival at the user's stop & Open fleet feeds enable dynamic services & Drift from schedule misleads residents \\
+\addlinespace
+Arrival-time prediction~\cite{chien2002,jeong2004} & Quantitative ETA with measurable error & Assumes dense data; gives an estimate, not a departure decision & Historical feeds allow backtesting & Ten-minute updates cap accuracy; overfitting \\
+\addlinespace
+Pedestrian routing~\cite{knoblauch1996,postgis} & Network-based walking time, per-user speed & Ignores truck route and dwell behavior & Spatial databases scale to many stops & Positioning error; age-related speed variation \\
+\addlinespace
+Tool-using LLM agents~\cite{yao2023react,schick2023toolformer,patil2023gorilla} & Natural-language interaction and flexible orchestration & Hallucinated numbers; unbounded tool use~\cite{ji2023hallucination} & Schema-validated tools and grounding checks & Unsafe advice; out-of-scope answers \\
+\bottomrule
+\end{tabular}
+\end{table*}

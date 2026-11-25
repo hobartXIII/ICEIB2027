@@ -1,20 +1,10 @@
-\section{Evaluation Design}\label{sec:experiments}
+\section{Simulation and Evaluation}\label{sec:experiments}
 
-This section specifies the evaluation protocol. The backtest has not yet been executed, so no measured values are reported; Table~\ref{tab:comparison} shows the planned reporting format.
+This section specifies the simulation protocol. The backtest has not yet been executed, so no measured values are reported; Table~\ref{tab:comparison} shows the planned reporting format.
 
-\subsection{Data and Ground Truth}
-The evaluation uses historical Taichung fleet records collected from the open-data feed~\cite{taichung_fleet_api} over 2024--2026, which share the format of the live API, together with published collection schedules and stop locations. Before use, records are validated for missing fields, coordinates outside the city boundary, duplicate timestamps, and implausible speeds, and each record keeps both $t_o$ and $t_c$.
-
-Because positions are sampled roughly every ten minutes, the true arrival time at a stop is itself not observed directly. We define the reference arrival time as the time at which the truck's route progress, linearly interpolated between consecutive records, reaches the stop. Arrivals whose bracketing records are too far apart are excluded and reported separately. The resulting label resolution limits the accuracy that any predictor can demonstrate and is reported alongside the results.
-
-\subsection{Rolling-Origin Backtest}
-Random cross-validation would leak future traffic conditions into training. We therefore use rolling-origin evaluation~\cite{tashman2000,hyndman2021}. Records from January 2024 to December 2025 are used for model fitting and for calibrating the buffer parameters $\alpha$ and $z$, and 2026 records are held out for testing. In the test period, the system is replayed forward in time: at each simulated query time, only records with $t_c \le t_q$ are visible, and the replayed latency reproduces the actual update gaps of the feed. Simulated queries are generated from origins sampled around each stop, at several walking speeds that represent different age groups~\cite{knoblauch1996}.
-
-\subsection{Baselines}
-Arrival-time predictors are compared under identical inputs: (B1) the static schedule, (B2) the historical average, (B3) the distance--speed model, and (P) the regression model described in Section~\ref{sec:method}. For the decision layer, slack-based ranking with the adaptive buffer is compared with nearest-stop ranking and with a fixed buffer of $b_0$.
-
-\subsection{Evaluation Metrics}
-\textbf{Prediction accuracy.} Mean absolute error (MAE) and root-mean-square error (RMSE) of $\hat{A}_s$, stratified by prediction horizon and by data latency. Improvement over the historical-average baseline is tested with the Diebold--Mariano test~\cite{diebold1995}.
+% Q. Quality and Quantity
+\subsection{Performance Metrics}
+\textbf{Prediction accuracy.} Mean absolute error (MAE) and root-mean-square error (RMSE) of $\hat{A}_s$, stratified by prediction horizon and by data latency.
 
 \textbf{Decision safety.} The primary metric is the \emph{false-feasibility rate} (FFR), the fraction of \textsc{Advise} outcomes for which the reference arrival occurs before the resident would have reached the stop:
 \begin{equation}
@@ -22,14 +12,55 @@ Arrival-time predictors are compared under identical inputs: (B1) the static sch
 \label{eq:ffr}
 \end{equation}
 
-\textbf{Usefulness.} \emph{Coverage} is the fraction of queries receiving an \textsc{Advise} outcome, and the \emph{catch rate} is the fraction of advised queries in which the resident arrives in time. Following the risk--coverage view of selective prediction~\cite{geifman2017}, we report FFR as a function of coverage by varying $z$, so that a low FFR cannot be obtained simply by advising almost never.
+\textbf{Usefulness.} \emph{Coverage} is the fraction of queries receiving an \textsc{Advise} outcome, and the \emph{catch rate} is the fraction of advised queries in which the resident arrives in time.
 
 \textbf{Degradation.} The \emph{fallback success rate} is the fraction of anomalous inputs for which the system correctly returns \textsc{Defer} with an accurate reason, rather than advising on invalid data.
 
+% R. Related methods to compare
+\subsection{Compared Methods}
+Arrival-time predictors are compared under identical inputs: (B1) the static schedule, (B2) the historical average, (B3) the distance--speed model, and (P) the regression model of Section~\ref{sec:method}. For the decision layer, slack ranking with the adaptive buffer is compared with nearest-stop ranking and with a fixed buffer of $b_0$. For the agent, the tool-grounded design is compared with the same LLM answering from raw fleet records without tools, to measure ungrounded numbers in responses.
+
+% S. Simulation setup
+\subsection{Simulation Setup}
+\textbf{Data.} Historical Taichung fleet records from the open-data feed~\cite{taichung_fleet_api} over 2024--2026, which share the format of the live API, are combined with published schedules and stop locations. Records are validated for missing fields, coordinates outside the city boundary, duplicate timestamps, and implausible speeds.
+
+\textbf{Ground truth.} Because positions are sampled roughly every ten minutes, true arrivals are not observed directly. The reference arrival is the time at which the truck's route progress, linearly interpolated between consecutive records, reaches the stop. Arrivals whose bracketing records are too far apart are excluded and reported separately.
+
+\textbf{Rolling-origin backtest.} Random cross-validation would leak future traffic conditions into training, so we use rolling-origin evaluation~\cite{tashman2000,hyndman2021}. Records from January 2024 to December 2025 are used for fitting and calibration, and 2026 records are held out. In the test period, the system is replayed forward in time: at each simulated query, only records with $t_c \le t_q$ are visible, reproducing the actual update gaps of the feed. Queries are generated from origins sampled around each stop.
+
+% T. Tuning parameters
+\subsection{Parameter Settings}
+Table~\ref{tab:params} lists the parameters varied in the simulation. The buffer parameters are calibrated only on 2024--2025 data and then fixed for the test period.
+
+\begin{table}[t]
+\caption{Simulation Parameters}
+\label{tab:params}
+\centering
+\footnotesize
+\begin{tabular}{@{}lp{0.55\columnwidth}@{}}
+\toprule
+Parameter & Setting \\
+\midrule
+$z$ & Swept to trace FFR against coverage \\
+$\alpha$ & Calibrated on 2024--2025 data \\
+$b_0$ & 3~min initially; fixed-buffer variants for comparison \\
+$\tau$ & 15~min initially; sensitivity analysis over 10--20~min \\
+$v_u$ & Walking speeds representing different age groups~\cite{knoblauch1996} \\
+$\epsilon_u$ & Device accuracy from 10~m to 200~m \\
+Search radius & Candidate-stop radius around the user \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% U. Useful results
+\subsection{Expected Results and Reporting}
+Results will be reported in the form of Table~\ref{tab:comparison}, together with FFR--coverage curves for each predictor obtained by sweeping $z$, so that a low FFR cannot be obtained simply by advising almost never~\cite{geifman2017}. All results will be stratified by latency and walking speed, and label resolution will be reported alongside accuracy.
+
 \input{tables/comparison}
 
-\subsection{Anomaly Scenario Tests}
-Beyond the backtest, at least thirty anomaly scenarios test the agent end to end. They are grouped into the categories in Table~\ref{tab:anomaly}. Each scenario specifies the input, the expected outcome, and the expected disclosed reason, and is judged as passing only if no number in the response lacks a source in the tool payload.
+% V. Verify effectiveness
+\subsection{Verification of Effectiveness}
+Effectiveness is verified by three tests. First, improvement in arrival-time error over the historical-average baseline is tested with the Diebold--Mariano test~\cite{diebold1995}. Second, Proposition~1 is checked empirically by comparing the measured FFR with the calibration target $\eta$ on the test period. Third, at least thirty anomaly scenarios in the categories of Table~\ref{tab:anomaly} test the agent end to end. Each scenario specifies the input, the expected outcome, and the expected disclosed reason, and passes only if every number in the response has a source in the tool payload.
 
 \begin{table}[t]
 \caption{Anomaly Scenario Categories}
@@ -52,5 +83,4 @@ Out-of-scope request & Medical question $\rightarrow$ declined by rule \\
 \end{tabular}
 \end{table}
 
-\subsection{Threats to Validity}
-The ten-minute sampling interval bounds both prediction accuracy and label precision. Walking speeds are simulated rather than measured from users, and stop--route mapping may be incomplete for some routes. These limitations are reported explicitly rather than hidden by aggregate metrics.
+\textbf{Threats to validity.} The ten-minute sampling interval bounds both prediction accuracy and label precision. Walking speeds are simulated rather than measured from users, and stop--route mapping may be incomplete for some routes. These limitations are reported explicitly rather than hidden by aggregate metrics.

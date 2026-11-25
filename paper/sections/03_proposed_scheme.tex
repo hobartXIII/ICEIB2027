@@ -1,54 +1,75 @@
 \section{Proposed Scheme}\label{sec:method}
 
-\subsection{Problem Formulation}
-A resident issues a query at time $t_q$ from location $u$, optionally with a personal walking speed $v_u$. Let $\mathcal{S}$ be the set of collection stops within a search radius of $u$ whose collection window covers $t_q$. For the truck serving stop $s\in\mathcal{S}$, the most recent fleet record carries an observation time $t_o$ (\texttt{observed\_at}, when the position was recorded) and a collection time $t_c$ (\texttt{collected\_at}, when GarbageGo received it). The data latency at query time is
+% PA. Aim
+\subsection{Design Aim}
+GarbageGo aims to answer one question for a resident at query time $t_q$: \emph{which nearby stop, if any, can I safely reach before the truck if I leave now?} The design goals are (G1) to rank stops by the safety of reaching them rather than by distance; (G2) to keep the rate of wrong ``you can make it'' advice below a target level; (G3) to defer explicitly when data do not support advice; and (G4) to ensure that every number shown to the user comes from a verifiable computation.
+
+% PB. Based on / background
+\subsection{Background and Design Basis}
+The design rests on four domain facts. First, the Taichung fleet feed is refreshed about every ten minutes, and each record has an observation time $t_o$ (\texttt{observed\_at}) and a time $t_c$ (\texttt{collected\_at}) at which GarbageGo receives it~\cite{taichung_fleet_api}. Second, trucks follow fixed routes with short dwell times at each stop, so a truck that has passed a stop will not return. Third, the nearest stop is often the one the truck is about to leave. Fourth, walking speed varies widely, especially among older adults~\cite{knoblauch1996}.
+
+% PC. Cure / Cause
+\subsection{Rationale of the Solution}
+Because sparse data place a ceiling on arrival-time accuracy, GarbageGo does not try to make the estimate exact. Instead, it carries the uncertainty explicitly into the decision: a safety buffer absorbs latency, prediction error, and positioning error, and the system abstains when the uncertainty is too large. This works because a miss can only occur when the combined estimation error exceeds the buffer, which is shown formally in Section~\ref{subsec:math}.
+
+% PD. Design paradigm
+\subsection{Design Paradigm}
+The design combines two shifts. The first is from \emph{prediction} to \emph{selective decision}: the output is not an arrival time but one of three outcomes, namely advise, no feasible stop, or defer. The second is from \emph{open-ended} to \emph{tool-grounded} agents: the LLM interprets requests and explains results, while all spatial and temporal computation is done by deterministic, schema-validated tools.
+
+% PE. Paper elements
+\subsection{System Elements}
+GarbageGo is implemented as a modular monolith, a single deployable service with strict internal module boundaries, backed by PostgreSQL with the PostGIS extension~\cite{postgis} and exposed through a FastAPI web interface. Its elements are: (E1) a \emph{data acquisition and validation} module that ingests live and historical fleet records with the same format, checks fields, coordinate ranges, and timestamps, and stores both $t_o$ and $t_c$; (E2) a \emph{GIS engine} that retrieves candidate stops and computes network walking distances; (E3) an \emph{ETA engine} with interchangeable predictors; (E4) a \emph{recommendation engine} that applies the decision rule; and (E5) an \emph{LLM agent} that may call only the whitelisted tools in Table~\ref{tab:tools}.
+
+\begin{table}[t]
+\caption{Whitelisted Tools Exposed to the LLM Agent}
+\label{tab:tools}
+\centering
+\footnotesize
+\begin{tabular}{@{}lp{0.47\columnwidth}@{}}
+\toprule
+Tool & Output \\
+\midrule
+\texttt{find\_candidate\_stops} & Stops within radius whose collection window covers $t_q$ \\
+\texttt{get\_fleet\_status} & Latest truck records with $t_o$, $t_c$, and validation flags \\
+\texttt{estimate\_walking\_time} & $\hat{W}_s$ from network distance and $v_u$ \\
+\texttt{predict\_eta} & $\hat{A}_s$ and residual spread $\hat{e}_s(h)$ \\
+\texttt{evaluate\_feasibility} & Outcome (advise, defer, or no feasible stop), ranked stops, $\sigma_s$, reasons \\
+\texttt{get\_static\_timetable} & Published schedule for the fallback mode \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% PF. Formulation
+\subsection{Formulation}
+A resident at location $u$ with walking speed $v_u$ issues a query at $t_q$. Let $\mathcal{S}$ be the set of stops within a search radius of $u$ whose collection window covers $t_q$. The data latency is
 \begin{equation}
 \Delta = t_q - t_o ,
 \label{eq:latency}
 \end{equation}
-which includes both the update interval of the open data and the transmission delay $t_c - t_o$.
-
-For each stop we estimate the remaining time until the truck arrives, $\hat{A}_s$, and the resident's walking time
+which includes both the update interval and the transmission delay $t_c - t_o$. For each stop $s\in\mathcal{S}$, the ETA engine estimates the remaining time $\hat{A}_s$ until the truck arrives, and the GIS engine estimates the walking time
 \begin{equation}
 \hat{W}_s = \frac{d_{\mathrm{net}}(u,s)}{v_u},
 \label{eq:walk}
 \end{equation}
-where $d_{\mathrm{net}}$ is the shortest pedestrian-network distance. The time margin, or \emph{slack}, of stop $s$ is
+where $d_{\mathrm{net}}$ is the shortest pedestrian-network distance. The \emph{slack} of stop $s$ is
 \begin{equation}
 \sigma_s = \hat{A}_s - \hat{W}_s - B_s ,
 \label{eq:slack}
 \end{equation}
-where $B_s$ is a safety buffer. A positive slack means that, under current data and assumptions, the resident can depart now and arrive with at least $B_s$ to spare; it is not a guarantee. The slack also yields a latest recommended departure time, $t_q + \sigma_s$.
-
-\subsection{Adaptive Safety Buffer}
-A fixed buffer either wastes residents' time when data are fresh or is too thin when data are stale. We therefore let the buffer grow with each source of uncertainty:
+with the safety buffer
 \begin{equation}
 B_s = b_0 + \alpha\,\Delta + z\,\hat{e}_{s}(h) + \frac{\epsilon_u}{v_u},
 \label{eq:buffer}
 \end{equation}
-where $b_0$ is a minimum buffer (initially three minutes); $\alpha\Delta$ accounts for truck movement since the last observation; $\hat{e}_{s}(h)$ is the empirical spread of arrival-time residuals at prediction horizon $h$, estimated on the training period; $z$ sets the conservativeness; and $\epsilon_u$ is the reported positioning accuracy of the user's device, converted to time. The parameters $\alpha$ and $z$ are calibrated on the training period so that the false-feasibility rate on validation data stays below a target level, and are not tuned on the test period.
+where $b_0$ is a minimum buffer (initially three minutes); $\alpha\Delta$ accounts for truck movement since the last observation; $\hat{e}_{s}(h)$ is the empirical spread of arrival-time residuals at prediction horizon $h$, estimated on training data; $z$ sets the conservativeness; and $\epsilon_u$ is the positioning accuracy reported by the user's device. A positive slack means that, under current data, the resident can leave now and arrive with at least $B_s$ to spare, and $t_q + \sigma_s$ is the latest recommended departure time.
 
-\subsection{Advise-or-Defer Decision Rule}
-Given the slacks, the system returns exactly one of three outcomes:
-\begin{enumerate}
-\item \textbf{Defer.} If fleet data are unavailable, fail validation, or are stale ($\Delta > \tau$, with $\tau = 15$ minutes initially), the system does not compute slack. It shows the official static schedule for nearby stops and states explicitly that dynamic data are unavailable and why.
-\item \textbf{Advise.} Otherwise, stops that the truck has already passed are removed, and the feasible set $\mathcal{F} = \{s\in\mathcal{S} : \sigma_s > 0\}$ is formed. If $\mathcal{F}$ is non-empty, stops are ranked by slack in descending order. The first is the primary recommendation, and up to two more are offered as alternatives, each with its latest departure time, data timestamp, and risk notes.
-\item \textbf{No feasible stop.} If $\mathcal{F}$ is empty, the system states that no nearby stop can be reached with an adequate margin and shows the next scheduled collection.
-\end{enumerate}
-Ranking by slack rather than distance reflects a core domain insight: the nearest stop is often the one the truck is about to leave. Ranking by the largest margin selects the option most robust to prediction error.
+The decision rule returns exactly one outcome. \textbf{Defer:} if fleet data are unavailable, invalid, or stale ($\Delta > \tau$, with $\tau = 15$ minutes initially), slack is not computed; the official static schedule is shown with an explicit statement of why dynamic advice is unavailable. \textbf{Advise:} otherwise, stops already passed by the truck are removed, and if the feasible set $\mathcal{F} = \{s : \sigma_s > 0\}$ is non-empty, stops are ranked by slack in descending order, giving one primary recommendation and up to two alternatives. \textbf{No feasible stop:} if $\mathcal{F}$ is empty, the system says so and shows the next scheduled collection.
 
-\subsection{Arrival-Time Predictors}
-The ETA engine exposes interchangeable predictors behind a common interface so that they can be compared under identical conditions:
-\begin{itemize}
-\item \textbf{Static schedule:} the published collection time at $s$ minus $t_q$.
-\item \textbf{Historical average:} the mean travel time from the truck's current route position to $s$ on the same route, weekday type, and time of day in the training period.
-\item \textbf{Distance--speed:} remaining route distance to $s$ divided by the truck's recent average speed, plus the expected dwell time at the intermediate stops.
-\item \textbf{Regression:} a regression model using remaining route distance, number of remaining stops, time of day, weekday type, recent speed, and data latency as features.
-\end{itemize}
-All predictors require mapping a truck position to its progress along the route, which is done by projecting the position onto the ordered stop sequence of the route. A truck that has reported zero speed for an extended period is flagged as stationary, and its uncertainty term is widened.
+The ETA engine exposes four predictors behind a common interface: (i) the \emph{static schedule}; (ii) the \emph{historical average} travel time from the truck's current route position to $s$ for the same route, weekday type, and time of day; (iii) a \emph{distance--speed} model using remaining route distance, recent speed, and expected dwell at intermediate stops; and (iv) a \emph{regression} model over remaining route distance, number of remaining stops, time of day, weekday type, recent speed, and latency. All predictors project the truck position onto the ordered stop sequence of its route; a truck reporting zero speed for an extended period is flagged as stationary, and its uncertainty term is widened.
 
-\subsection{System Architecture}
-GarbageGo is implemented as a modular monolith, a single deployable service with strict internal module boundaries, backed by PostgreSQL with the PostGIS extension and exposed through a FastAPI web interface. Fig.~\ref{fig:architecture} shows the components and data flow. The \emph{data acquisition and validation} module ingests the official fleet feed~\cite{taichung_fleet_api} and historical records with the same format, checks fields, coordinate ranges, and timestamps, and stores both $t_o$ and $t_c$. The \emph{GIS engine} retrieves candidate stops and computes network walking distances. The \emph{ETA engine} produces $\hat{A}_s$ and the error spread used in~\eqref{eq:buffer}. The \emph{recommendation engine} applies the decision rule. The \emph{LLM agent} interprets the user's request, calls the tools, and turns the structured result into an explanation.
+% PG. Graph
+\subsection{Architecture}
+Fig.~\ref{fig:architecture} shows how the elements interact. The only probabilistic component, the LLM agent, sits between the user and the deterministic engines. It sends schema-validated tool calls and receives a structured JSON result. The GIS and ETA engines supply $\hat{W}_s$ and $\hat{A}_s$ to the recommendation engine, and the validation module supplies the latency $\Delta$ that drives both the buffer and the defer decision.
 
 \begin{figure}[t]
 \centering
@@ -79,30 +100,13 @@ GarbageGo is implemented as a modular monolith, a single deployable service with
 \label{fig:architecture}
 \end{figure}
 
-\subsection{Tool-Grounded Agent Design}
-The agent may call only the whitelisted tools in Table~\ref{tab:tools}. Each tool has a JSON Schema for its arguments and its result, and calls that fail validation are rejected before execution. The LLM never computes coordinates, distances, or times itself. To confine hallucination to a verifiable boundary, the final response is generated from the structured result payload under a grounding template, and every number in the generated text is checked against that payload. If the check fails, the system falls back to a deterministic text template. Requests outside the domain, such as medical questions, are declined by rule.
+% PH. How
+\subsection{How the Design Goals Are Achieved}
+Goal G1 is met by ranking on $\sigma_s$ instead of distance and by excluding stops already passed. G2 is met by the buffer~\eqref{eq:buffer}, whose parameters $\alpha$ and $z$ are calibrated on the training period so that the false-feasibility rate on validation data stays below a target $\eta$, as justified in Section~\ref{subsec:math}. G3 is met by the defer outcome, triggered by staleness, validation failure, or unavailable data, always with a disclosed reason. G4 is met by tool grounding: each tool has a JSON Schema for its arguments and result, invalid calls are rejected before execution, the response is generated from the result payload under a grounding template, and every number in the generated text is checked against that payload. If the check fails, a deterministic text template is used instead. Out-of-domain requests, such as medical questions, are declined by rule.
 
-\begin{table}[t]
-\caption{Whitelisted Tools Exposed to the LLM Agent}
-\label{tab:tools}
-\centering
-\footnotesize
-\begin{tabular}{@{}lp{0.47\columnwidth}@{}}
-\toprule
-Tool & Output \\
-\midrule
-\texttt{find\_candidate\_stops} & Stops within radius whose collection window covers $t_q$ \\
-\texttt{get\_fleet\_status} & Latest truck records with $t_o$, $t_c$, and validation flags \\
-\texttt{estimate\_walking\_time} & $\hat{W}_s$ from network distance and $v_u$ \\
-\texttt{predict\_eta} & $\hat{A}_s$ and residual spread $\hat{e}_s(h)$ \\
-\texttt{evaluate\_feasibility} & Outcome (advise, defer, or no feasible stop), ranked stops, $\sigma_s$, reasons \\
-\texttt{get\_static\_timetable} & Published schedule for the fallback mode \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{Recommendation Procedure}
-Algorithm~\ref{alg:method} summarizes the end-to-end procedure.
+% PI. Implementation / interaction
+\subsection{Implementation and Interaction}
+Algorithm~\ref{alg:method} gives the end-to-end procedure executed for each query.
 
 \begin{algorithm}[t]
 \caption{Advise-or-Defer Departure Recommendation}
@@ -130,3 +134,49 @@ Algorithm~\ref{alg:method} summarizes the end-to-end procedure.
 \State \Return \Call{Explain}{\textsc{Advise}, top three of $\mathcal{F}$, $\Delta$}
 \end{algorithmic}
 \end{algorithm}
+
+% PJ. Jump to an example
+\subsection{Illustrative Example}
+Table~\ref{tab:example} walks through a hypothetical query; the values are chosen for illustration and are not measurements. A resident walking at 1.0~m/s queries three stops with fleet data that are six minutes old ($\Delta = 6$~min $\le \tau$), a device accuracy of 30~m (0.5~min of walking), $b_0 = 3$~min, $\alpha = 0.2$, and error terms $z\hat{e}_s$ of 1.0, 1.8, and 2.4~min for stops A, B, and C, whose prediction horizons grow in that order. Stop~A is the nearest, and the resident could physically walk there before the truck's predicted arrival ($2.5 < 4$~min). However, once the buffer is included its slack is negative, so it is rejected. Stop~B has the largest slack and becomes the primary recommendation, with a latest departure time 2.5~min after the query, and stop~C is offered as an alternative. If the same query arrived with $\Delta = 18$~min, the system would defer and show the static schedule instead.
+
+\begin{table}[t]
+\caption{Illustrative Example with Hypothetical Values (Minutes)}
+\label{tab:example}
+\centering
+\footnotesize
+\begin{tabular}{@{}lcccccl@{}}
+\toprule
+Stop & $d_{\mathrm{net}}$ (m) & $\hat{A}_s$ & $\hat{W}_s$ & $B_s$ & $\sigma_s$ & Decision \\
+\midrule
+A & 150 & 4.0 & 2.5 & 5.7 & $-4.2$ & Rejected \\
+B & 420 & 16.0 & 7.0 & 6.5 & 2.5 & Primary \\
+C & 600 & 19.0 & 10.0 & 7.1 & 1.9 & Alternative \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% PK. Key points
+\subsection{Key Points}
+The scheme contributes (i) a slack-based, selective decision that ranks stops by safety margin and can abstain; (ii) a buffer that grows with each identified source of uncertainty, with a calibration target tied to the false-feasibility rate; and (iii) a tool-grounded agent in which language generation cannot introduce unverified numbers.
+
+% PL. Later how to do simulation
+\subsection{Simulation Plan}
+The scheme is evaluated by replaying 2024--2026 historical fleet records in time order. Simulated residents with different walking speeds query from origins around each stop, and outcomes are compared with reference arrivals reconstructed from the records. Section~\ref{sec:experiments} gives the full protocol.
+
+% PM. Math proof
+\subsection{Analysis of the False-Feasibility Rate}\label{subsec:math}
+Let $A_s$ and $W_s$ be the true remaining arrival time and walking time, and let $x$ denote all information available at $t_q$, which determines $\hat{A}_s$, $\hat{W}_s$, $B_s$, and hence whether stop $s$ is advised. Ignoring dwell time (which only helps the resident), a resident who leaves at $t_q$ misses the truck if $A_s < W_s$. Define the combined error
+\begin{equation}
+E_s = (\hat{A}_s - A_s) + (W_s - \hat{W}_s).
+\label{eq:error}
+\end{equation}
+
+\textbf{Proposition 1.} If $B_s \ge q_{1-\eta}(E_s \mid x)$, the $(1-\eta)$ conditional quantile of $E_s$, then $\Pr(\text{miss} \mid \text{advise}) \le \eta$.
+
+\emph{Proof.} Stop $s$ is advised only if $\hat{A}_s - \hat{W}_s > B_s$. A miss means $A_s - W_s < 0$. Subtracting the second inequality from the first gives $E_s > B_s$, so for every $x$ in which $s$ is advised, $\Pr(\text{miss} \mid x) \le \Pr(E_s > B_s \mid x) \le \eta$. Since advising is determined by $x$, averaging over all such $x$ gives $\Pr(\text{miss} \mid \text{advise}) \le \eta$. \hfill$\blacksquare$
+
+\textbf{Proposition 2.} For fixed estimates $\hat{A}_s$ and $\hat{W}_s$, increasing the buffer of every stop cannot enlarge the feasible set $\mathcal{F}$, so coverage is non-increasing in $z$, $\alpha$, and $b_0$.
+
+\emph{Proof.} $\sigma_s$ is strictly decreasing in $B_s$, and $B_s$ is non-decreasing in each of these parameters. Hence any stop with $\sigma_s \le 0$ under a smaller buffer still has $\sigma_s \le 0$ under a larger one. \hfill$\blacksquare$
+
+Together, the propositions show that the buffer is a single control for the risk--coverage trade-off~\cite{geifman2017}. The terms of~\eqref{eq:buffer} serve as a practical estimate of $q_{1-\eta}(E_s \mid x)$. Because this quantile is estimated, the bound holds only approximately, which is why the false-feasibility rate is measured directly in the backtest.
